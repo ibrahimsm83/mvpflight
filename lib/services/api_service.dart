@@ -5,7 +5,10 @@ import 'dart:developer';
 import 'package:http/http.dart' as http;
 
 class ApiService {
-  static const String apiKey = "AIzaSyBZ__aYmZxnIQdm1GZALUgTxWK4s1LpHCk"; //capcup
+  // static const String apiKey = "AIzaSyBZ__aYmZxnIQdm1GZALUgTxWK4s1LpHCk"; //FastLane
+  // static const String apiKey = "AIzaSyAME9RZ8rbjiDsNUJJrUlqe0QNrqjgCAxQ"; //Amarsidy
+  // static const String apiKey = "AIzaSyCDGe4wXXZ1gwVU2W1Qz66g5Rf0t-df9NQ"; //Amarsidy
+  static const String apiKey = "AIzaSyCDGe4wXXZ1gwVU2W1Qz66g5Rf0t-df9NQ"; //Amarsidy
 
 
   static Future<Map<String, String>> getDistanceMatrix(
@@ -14,49 +17,130 @@ class ApiService {
       double destLat,
       double destLng,
       ) async {
-    final url =
-        "https://maps.googleapis.com/maps/api/distancematrix/json?"
-        "origins=$originLat,$originLng"
-        "&destinations=$destLat,$destLng"
-        "&departure_time=now"
-        "&traffic_model=best_guess"
-        "&mode=driving"
-        "&key=$apiKey";
+    final url = Uri.parse(
+      "https://routes.googleapis.com/directions/v2:computeRoutes",
+    );
 
-    final response = await http.get(Uri.parse(url));
+    final response = await http.post(
+      url,
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": apiKey,
+        "X-Goog-FieldMask":
+        "routes.distanceMeters,routes.duration,routes.staticDuration",
+      },
+      body: jsonEncode({
+        "origin": {
+          "location": {
+            "latLng": {
+              "latitude": originLat,
+              "longitude": originLng
+            }
+          }
+        },
+        "destination": {
+          "location": {
+            "latLng": {
+              "latitude": destLat,
+              "longitude": destLng
+            }
+          }
+        },
+        "travelMode": "DRIVE",
+        "routingPreference": "TRAFFIC_AWARE"
+      }),
+    );
 
     if (response.statusCode != 200) {
       throw Exception("HTTP error: ${response.statusCode}");
     }
 
-    final data = json.decode(response.body);
+    final data = jsonDecode(response.body);
 
-    // 🔍 Debug (keep this while testing)
-    print("API RESPONSE: $data");
+    print("NEW API RESPONSE: $data");
 
-    if (data['rows'] == null || data['rows'].isEmpty) {
-      throw Exception("No rows returned from API");
+    if (data['routes'] == null || data['routes'].isEmpty) {
+      throw Exception("No routes found");
     }
 
-    final elements = data['rows'][0]['elements'];
+    final route = data['routes'][0];
 
-    if (elements == null || elements.isEmpty) {
-      throw Exception("No elements returned from API");
-    }
+    /// 🔹 Convert values
+    double distanceKm = route['distanceMeters'] / 1000;
 
-    final element = elements[0];
-
-    if (element['status'] != 'OK') {
-      throw Exception("Distance Matrix error: ${element['status']}");
-    }
+    Duration duration = parseDuration(route['duration']); // with traffic
+    Duration staticDuration =
+    parseDuration(route['staticDuration']); // without traffic
 
     return {
-      "distance": element['distance']['text'],
-      "duration": element['duration']['text'],
-      "traffic_duration": element['duration_in_traffic']['text'],
+      "distance": "${distanceKm.toStringAsFixed(2)} km",
+      "duration": formatDuration(staticDuration),
+      "traffic_duration": formatDuration(duration),
     };
   }
 
+
+  static Duration parseDuration(String duration) {
+    final seconds = int.parse(duration.replaceAll("s", ""));
+    return Duration(seconds: seconds);
+  }
+
+ static String formatDuration(Duration d) {
+    int hours = d.inHours;
+    int minutes = d.inMinutes % 60;
+
+    if (hours > 0) {
+      return "$hours h $minutes min";
+    } else {
+      return "$minutes min";
+    }
+  }
+  ///Weather
+
+  /// “Flight delay ho sakti hai ya nahi?”
+  //
+  // Toh humein sirf temp nahi, yeh cheezein chahiye:
+  //
+  // ✈️ Important Weather Factors for Flights
+  //
+  // Ye 5 cheezein decide karti hain delay:
+  //
+  // 1. 🌧️ Rain / Thunderstorm
+  // Heavy rain = ❌ delay chances high
+  // Thunderstorm = ❌❌ HIGH delay
+  // 2. 🌫️ Visibility (Fog / Smog)
+  // Low visibility = ❌ flights delay / divert
+  // 3. 💨 Wind Speed
+  // High wind (>25 km/h) = ❌ landing issue
+  // 4. 🌡️ Extreme Temperature
+  // Usually ok, but heatwaves affect performance
+  // 5. ☁️ Clouds
+  // Low clouds = risky for landing
+  static Future<Map<String, dynamic>> getWeather(
+      double lat,
+      double lng,
+      ) async {
+    final url = Uri.parse(
+      "https://api.openweathermap.org/data/2.5/weather?"
+          // "lat=${52.746}&lon=${-87.749}&appid=d93ae92db1225dd97aae37e416568e8b&units=metric",
+          "lat=$lat&lon=$lng&appid=d93ae92db1225dd97aae37e416568e8b&units=metric",
+    );
+
+    final response = await http.get(url);
+    final data = jsonDecode(response.body);
+    /// 🔥 RAW JSON print (string)
+    print("RAW RESPONSE:");
+    print(response.body);
+
+    return {
+      "temp": data['main']['temp'],
+      "condition": data['weather'][0]['main'],
+      "description": data['weather'][0]['description'],
+      "wind": data['wind']['speed'], // m/s
+      "visibility": data['visibility'], // meters
+      "humidity": data['main']['humidity'],
+    };
+  }
 
   // services/api_service.dart
 ///step2

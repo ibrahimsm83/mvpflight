@@ -135,7 +135,7 @@ class ApiService {
   static Future<Map<String, dynamic>?> _fetchFromAviationstack(
     String flightNo,
   ) async {
-    if (aviationStackKey == "YOUR_AVIATIONSTACK_KEY") return null;
+    if (aviationStackKey == "9d3b48b554e96aac9cffc63fe1c61481") return null;
     final url = Uri.parse(
       "https://api.aviationstack.com/v1/flights?access_key=$aviationStackKey&flight_iata=$flightNo",
     );

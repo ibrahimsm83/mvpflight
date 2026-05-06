@@ -1,246 +1,158 @@
-// screens/home_screen.dart
-
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:get/get.dart';
-
-// import 'package:google_places_autocomplete_text_field/google_places_autocomplete_text_field.dart';
 import 'package:google_places_flutter/google_places_flutter.dart';
 import '../controller/travel_controller.dart';
 import '../services/api_service.dart';
 
 class HomeScreen extends StatelessWidget {
-  final controller = Get.put(TravelController());
-
-  Future<void> checkPermission() async {
-    LocationPermission permission = await Geolocator.checkPermission();
-
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
-
-    if (permission == LocationPermission.deniedForever) {
-      // Handle permanently denied case
-    }
-  }
+  HomeScreen({super.key});
+  final TravelController controller = Get.put(TravelController());
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text("Travel Planner"), centerTitle: true),
+      appBar: AppBar(title: const Text("Flight Demo MVP"), centerTitle: true),
       body: SingleChildScrollView(
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
             children: [
-              /// 🔹 HOME LOCATION
-              Card(
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: GooglePlaceAutoCompleteTextField(
-                    textEditingController: controller.homeController,
-                    googleAPIKey: ApiService.apiKey,
-                    focusNode: controller.homeFocus,
-                    // countries: ["pk"],
-                    isLatLngRequired: false,
-                    inputDecoration: InputDecoration(
-                      hintText: "Enter Home Location",
-                      border: InputBorder.none,
-                      prefixIcon: Icon(Icons.home),
-                    ),
-                    itemClick: (prediction) {
-                      controller.homeController.text =
-                          prediction.description ?? "";
-
-                      if (prediction.placeId != null) {
-                        controller.getPlaceLatLng(
-                          prediction.placeId!,
-                          isHome: true,
-                        );
-
-                      }
-                    },
+              _placesInputCard(
+                child: GooglePlaceAutoCompleteTextField(
+                  textEditingController: controller.homeController,
+                  googleAPIKey: ApiService.apiKey,
+                  focusNode: controller.homeFocus,
+                  isLatLngRequired: false,
+                  inputDecoration: const InputDecoration(
+                    hintText: "Enter Home Location",
+                    border: InputBorder.none,
+                    prefixIcon: Icon(Icons.home),
                   ),
+                  itemClick: (prediction) {
+                    controller.homeController.text =
+                        prediction.description ?? "";
+                    if (prediction.placeId != null) {
+                      controller.getPlaceLatLng(
+                        prediction.placeId!,
+                        isHome: true,
+                      );
+                    }
+                  },
                 ),
               ),
-
-              SizedBox(height: 12),
-
-              /// 🔹 DESTINATION
-              Card(
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: GooglePlaceAutoCompleteTextField(
-                    textEditingController: controller.destController,
-                    googleAPIKey: ApiService.apiKey,
-                    focusNode: controller.destFocus,
-                    // countries: ["pk"],
-                    isLatLngRequired: false,
-                    inputDecoration: InputDecoration(
-                      hintText: "Enter Airport / Destination",
-                      border: InputBorder.none,
-                      prefixIcon: Icon(Icons.location_on),
-                    ),
-                    itemClick: (prediction) {
-                      controller.destController.text =
-                          prediction.description ?? "";
-                      FocusScope.of(context).unfocus();
-
-                      if (prediction.placeId != null) {
-                        // controller.getPlaceLatLng(
-                        //   prediction.placeId!,
-                        //   isHome: false,
-                        // );
-                        controller.getPlaceLatLng(
-                          prediction.placeId!,
-                          isHome: false,
-                        ).then((_) {
-                       controller.analyzeWeather(); // 🔥(); // 🔥 important
-                        });
-                      }
-                    },
+              const SizedBox(height: 12),
+              _placesInputCard(
+                child: GooglePlaceAutoCompleteTextField(
+                  textEditingController: controller.destController,
+                  googleAPIKey: ApiService.apiKey,
+                  focusNode: controller.destFocus,
+                  isLatLngRequired: false,
+                  inputDecoration: const InputDecoration(
+                    hintText: "Enter Departure Airport",
+                    border: InputBorder.none,
+                    prefixIcon: Icon(Icons.flight_takeoff),
                   ),
+                  itemClick: (prediction) {
+                    controller.destController.text =
+                        prediction.description ?? "";
+                    FocusScope.of(context).unfocus();
+                    if (prediction.placeId != null) {
+                      controller.getPlaceLatLng(
+                        prediction.placeId!,
+                        isHome: false,
+                      );
+                    }
+                  },
                 ),
               ),
-
-              SizedBox(height: 20),
-
-              /// 🔹 BUTTON
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller.flightController,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  labelText: "Primary Flight Number",
+                  hintText: "e.g. PK303 or EK611",
+                ),
+              ),
+              const SizedBox(height: 8),
+              Obx(
+                () => SwitchListTile(
+                  value: controller.isConnecting.value,
+                  title: const Text("Connecting Flight"),
+                  subtitle: const Text("Enable if journey has second segment"),
+                  onChanged: (value) => controller.isConnecting.value = value,
+                ),
+              ),
+              Obx(
+                () => controller.isConnecting.value
+                    ? TextField(
+                        controller: controller.connectionFlightController,
+                        decoration: const InputDecoration(
+                          border: OutlineInputBorder(),
+                          labelText: "Connecting Flight Number",
+                          hintText: "e.g. EY222",
+                        ),
+                      )
+                    : const SizedBox.shrink(),
+              ),
+              const SizedBox(height: 14),
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: controller.getDistance,
-                  style: ElevatedButton.styleFrom(
-                    padding: EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
-                  child: Text("Calculate Route"),
+                  onPressed: controller.loadTripSummary,
+                  child: const Text("Generate Demo Summary"),
                 ),
               ),
-
-              SizedBox(height: 20),
-
-              /// 🔹 RESULT CARD
-              Obx(
-                () => Card(
-                  elevation: 3,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text("Distance"),
-                            Text(controller.distance.value),
-                          ],
-                        ),
-                        Divider(),
-
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text("Without Traffic"),
-                            Text(controller.duration.value),
-                          ],
-                        ),
-                        Divider(),
-
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text("With Traffic"),
-                            Text(controller.traficDuration.value),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-
-              Obx(() => controller.flightRisk.value.isEmpty
-                  ? SizedBox()
-                  : Card(
-                color: Colors.black87,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    children: [
-                      Text(
-                        "Airport Weather Status",
-                        style: TextStyle(color: Colors.white70),
-                      ),
-                      SizedBox(height: 10),
-
-                      Text(
-                        controller.flightRisk.value,
-                        style: TextStyle(
-                          fontSize: 18,
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-
-                      SizedBox(height: 8),
-
-                      Text(
-                        controller.weatherDesc.value,
-                        style: TextStyle(color: Colors.white60),
-                      ),
-                    ],
-                  ),
-                ),
-              )),
-
-              ///Step 2
-              ///Sizedb
-              SizedBox(height: 20.0),
-              // home_screen.dart me add karo
-              Text("Enter Flight Number"),
-              SizedBox(height: 20.0),
-
-              Card(
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 21.0),
-                  child: TextField(
-                    controller: TextEditingController(),
-                    onSubmitted: (value) {
-                      controller.getFlightStatus(value);
-                    },
-                    decoration: InputDecoration(
-                      hintText: "Enter Flight Number (e.g. PK303)",
-                      border: InputBorder.none,
-                    ),
-                  ),
-                ),
-              ),
-
-              SizedBox(height: 20),
-
+              const SizedBox(height: 16),
               Obx(
                 () => controller.isLoading.value
-                    ? CircularProgressIndicator()
+                    ? const CircularProgressIndicator()
                     : Column(
                         children: [
-                          Text("Status: ${controller.flightStatus.value}"),
-                          Text("Departure: ${controller.departureTime.value}"),
+                          _infoCard(
+                            "Home to Airport Distance",
+                            controller.distance.value,
+                          ),
+                          _infoCard(
+                            "Drive Time (No Traffic)",
+                            controller.duration.value,
+                          ),
+                          _infoCard(
+                            "Drive Time (With Traffic)",
+                            controller.traficDuration.value,
+                          ),
+                          _infoCard(
+                            "Recommended Leave Home At",
+                            controller.leaveHomeAt.value,
+                          ),
+                          _infoCard(
+                            "Timing Status",
+                            controller.timingStatus.value,
+                          ),
+                          _infoCard(
+                            "Total Buffer Used",
+                            controller.recommendedBuffer.value,
+                          ),
+                          _infoCard(
+                            "Airport Process Time",
+                            controller.airportProcessTime.value,
+                          ),
+                          _infoCard(
+                            "Boarding Time (inside airport)",
+                            controller.boardingTime.value,
+                          ),
+                          _infoCard(
+                            "Home to Airport Total",
+                            controller.homeToAirportTotal.value,
+                          ),
+                          _infoCard(
+                            "End-to-End Total Journey",
+                            controller.totalJourneyDuration.value,
+                          ),
+                          _warningCard(),
+                          _weatherCard(),
+                          _countryWeatherCard(),
+                          _flightsCard(),
                         ],
                       ),
               ),
@@ -249,5 +161,128 @@ class HomeScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Widget _placesInputCard({required Widget child}) {
+    return Card(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(padding: const EdgeInsets.all(12), child: child),
+    );
+  }
+
+  Widget _infoCard(String title, String value) {
+    if (value.isEmpty) return const SizedBox.shrink();
+    return Card(
+      child: ListTile(title: Text(title), subtitle: Text(value)),
+    );
+  }
+
+  Widget _weatherCard() {
+    return Obx(
+      () => controller.flightRisk.value.isEmpty
+          ? const SizedBox.shrink()
+          : Card(
+              color: Colors.black87,
+              child: ListTile(
+                title: const Text(
+                  "Airport Weather",
+                  style: TextStyle(color: Colors.white),
+                ),
+                subtitle: Text(
+                  "${controller.flightRisk.value}\n${controller.weatherDesc.value}",
+                  style: const TextStyle(color: Colors.white70),
+                ),
+              ),
+            ),
+    );
+  }
+
+  Widget _countryWeatherCard() {
+    return Obx(() {
+      if (controller.depWeather.value.isEmpty &&
+          controller.arrWeather.value.isEmpty) {
+        return const SizedBox.shrink();
+      }
+      return Card(
+        child: ListTile(
+          title: const Text("Weather (Both Sides)"),
+          subtitle: Text(
+            "${controller.depWeatherLabel.value} Weather: ${controller.depWeather.value}\n"
+            "${controller.arrWeatherLabel.value} Weather: ${controller.arrWeather.value}",
+          ),
+        ),
+      );
+    });
+  }
+
+  Widget _warningCard() {
+    return Obx(() {
+      if (controller.lateWarning.value.isEmpty) return const SizedBox.shrink();
+      return Card(
+        color: Colors.red.shade700,
+        child: ListTile(
+          leading: const Icon(Icons.warning_amber_rounded, color: Colors.white),
+          title: const Text(
+            "Time Alert",
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+          subtitle: Text(
+            controller.lateWarning.value,
+            style: const TextStyle(color: Colors.white),
+          ),
+        ),
+      );
+    });
+  }
+
+  Widget _flightsCard() {
+    return Obx(() {
+      if (controller.flights.isEmpty) return const SizedBox.shrink();
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            children: controller.flights.asMap().entries.map((entry) {
+              final i = entry.key + 1;
+              final f = entry.value;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "Segment $i",
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    Text("Route: ${f['dep_iata']} -> ${f['arr_iata']}"),
+                    Text("Status: ${f['status']}"),
+                    Text("Departure: ${f['departure']}"),
+                    Text("Arrival: ${f['arrival']}"),
+                    Text("Terminal: ${f['dep_terminal']} | Gate: ${f['gate']}"),
+                    Text("Delay: ${f['delay']} mins"),
+                    Text("Delay Update: ${f['delay_note'] ?? 'N/A'}"),
+                    Text("Data Source: ${f['provider'] ?? 'N/A'}"),
+                    Text(
+                      "Flight Duration: ${_flightDuration(f['departure'], f['arrival'])}",
+                    ),
+                    const Divider(),
+                  ],
+                ),
+              );
+            }).toList(),
+          ),
+        ),
+      );
+    });
+  }
+
+  String _flightDuration(dynamic dep, dynamic arr) {
+    final d = DateTime.tryParse((dep ?? '').toString());
+    final a = DateTime.tryParse((arr ?? '').toString());
+    if (d == null || a == null || !a.isAfter(d)) return "Not available";
+    final diff = a.difference(d);
+    final h = diff.inHours;
+    final m = diff.inMinutes % 60;
+    return h == 0 ? "$m min" : "$h h $m min";
   }
 }

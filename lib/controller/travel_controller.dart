@@ -24,6 +24,8 @@ class TravelController extends GetxController {
   final traficDuration = ''.obs;
   final leaveHomeAt = ''.obs;
   final recommendedBuffer = ''.obs;
+  final terminalSwitchPenaltyText = ''.obs;
+  final terminalChangeInfo = ''.obs;
   final airportProcessTime = ''.obs;
   final boardingTime = ''.obs;
   final homeToAirportTotal = ''.obs;
@@ -199,6 +201,11 @@ class TravelController extends GetxController {
     final Duration terminalSwitchPenalty = terminalChanged
         ? const Duration(minutes: 30)
         : Duration.zero;
+    terminalSwitchPenaltyText.value = _formatDuration(terminalSwitchPenalty);
+    final source = (flights.first['terminal_change_source'] ?? 'derived')
+        .toString();
+    terminalChangeInfo.value =
+        "Terminal changed: ${terminalChanged ? 'Yes' : 'No'} (source: $source)";
 
     const Duration checkIn = Duration(minutes: 60);
     const Duration security = Duration(minutes: 55);
@@ -271,11 +278,10 @@ class TravelController extends GetxController {
   void _checkLateWarning() {
     if (_leaveAtDateTime == null) return;
     final now = DateTime.now();
-    final lateThreshold = _leaveAtDateTime!.add(const Duration(minutes: 1));
-    if (now.isAfter(lateThreshold)) {
+    if (now.isAfter(_leaveAtDateTime!)) {
       lateWarning.value =
           "Warning: You are late. Leave immediately to avoid missing boarding.";
-      timingStatus.value = "Late by more than 1 minute.";
+      timingStatus.value = "Late: device time is greater than leave time.";
     } else {
       final remaining = _leaveAtDateTime!.difference(now);
       final mins = remaining.inMinutes;
@@ -292,9 +298,10 @@ class TravelController extends GetxController {
     final trimmed = value.trim();
     if (trimmed.isEmpty || trimmed.toLowerCase() == "n/a") return null;
     final direct = DateTime.tryParse(trimmed);
-    if (direct != null) return direct;
+    if (direct != null) return direct.toLocal();
     final normalized = trimmed.replaceFirst(' ', 'T');
-    return DateTime.tryParse(normalized);
+    final parsed = DateTime.tryParse(normalized);
+    return parsed?.toLocal();
   }
 
   Duration _parseHumanDuration(String value) {

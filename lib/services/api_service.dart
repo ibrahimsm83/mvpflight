@@ -135,7 +135,7 @@ class ApiService {
   static Future<Map<String, dynamic>?> _fetchFromAviationstack(
     String flightNo,
   ) async {
-    if (aviationStackKey == "9d3b48b554e96aac9cffc63fe1c61481") return null;
+    if (aviationStackKey == "YOUR_AVIATIONSTACK_KEY") return null;
     final url = Uri.parse(
       "https://api.aviationstack.com/v1/flights?access_key=$aviationStackKey&flight_iata=$flightNo",
     );
@@ -169,7 +169,14 @@ class ApiService {
       "arr_terminal": arrival['terminal'] ?? "N/A",
       "gate": departure['gate'] ?? "N/A",
       "delay": "$delayMin",
-      "terminal_changed": (departure['terminal'] ?? "").toString().isEmpty,
+      "terminal_changed": _toBool(
+        flight['terminal_changed'] ?? departure['terminal_changed'],
+      ),
+      "terminal_change_source":
+          flight['terminal_changed'] != null ||
+              departure['terminal_changed'] != null
+          ? "api"
+          : "derived",
       "dep_lat": 0.0,
       "dep_lng": 0.0,
       "arr_lat": 0.0,
@@ -205,7 +212,10 @@ class ApiService {
       "arr_terminal": flight['arr_terminal'] ?? "N/A",
       "gate": flight['dep_gate'] ?? "N/A",
       "delay": "${flight['delayed'] ?? 0}",
-      "terminal_changed": (flight['dep_terminal'] ?? "").toString().isEmpty,
+      "terminal_changed": _toBool(flight['terminal_changed']),
+      "terminal_change_source": flight['terminal_changed'] != null
+          ? "api"
+          : "derived",
       "dep_lat": _toDouble(flight['dep_lat']),
       "dep_lng": _toDouble(flight['dep_lng']),
       "arr_lat": _toDouble(flight['arr_lat']),
@@ -291,5 +301,12 @@ class ApiService {
     if (value is int) return value;
     if (value is num) return value.toInt();
     return int.tryParse(value.toString()) ?? 0;
+  }
+
+  static bool _toBool(dynamic value) {
+    if (value == null) return false;
+    if (value is bool) return value;
+    final v = value.toString().toLowerCase().trim();
+    return v == 'true' || v == '1' || v == 'yes';
   }
 }

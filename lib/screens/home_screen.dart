@@ -134,6 +134,14 @@ class HomeScreen extends StatelessWidget {
                             controller.recommendedBuffer.value,
                           ),
                           _infoCard(
+                            "Terminal Switch Penalty",
+                            controller.terminalSwitchPenaltyText.value,
+                          ),
+                          _infoCard(
+                            "Terminal Change Info",
+                            controller.terminalChangeInfo.value,
+                          ),
+                          _infoCard(
                             "Airport Process Time",
                             controller.airportProcessTime.value,
                           ),
@@ -262,6 +270,9 @@ class HomeScreen extends StatelessWidget {
                     Text("Delay: ${f['delay']} mins"),
                     Text("Delay Update: ${f['delay_note'] ?? 'N/A'}"),
                     Text("Data Source: ${f['provider'] ?? 'N/A'}"),
+                    Text(
+                      "Terminal Changed: ${f['terminal_changed'] == true ? 'Yes' : 'No'} (${f['terminal_change_source'] ?? 'derived'})",
+                    ),
                     Text(
                       "Flight Duration: ${_flightDuration(f['departure'], f['arrival'])}",
                     ),

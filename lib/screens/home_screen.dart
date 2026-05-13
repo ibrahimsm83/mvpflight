@@ -32,37 +32,17 @@ class HomeScreen extends StatelessWidget {
                     controller.homeController.text =
                         prediction.description ?? "";
                     if (prediction.placeId != null) {
-                      controller.getPlaceLatLng(
-                        prediction.placeId!,
-                        isHome: true,
-                      );
+                      controller.getPlaceLatLng(prediction.placeId!);
                     }
                   },
                 ),
               ),
-              const SizedBox(height: 12),
-              _placesInputCard(
-                child: GooglePlaceAutoCompleteTextField(
-                  textEditingController: controller.destController,
-                  googleAPIKey: ApiService.apiKey,
-                  focusNode: controller.destFocus,
-                  isLatLngRequired: false,
-                  inputDecoration: const InputDecoration(
-                    hintText: "Enter Departure Airport",
-                    border: InputBorder.none,
-                    prefixIcon: Icon(Icons.flight_takeoff),
-                  ),
-                  itemClick: (prediction) {
-                    controller.destController.text =
-                        prediction.description ?? "";
-                    FocusScope.of(context).unfocus();
-                    if (prediction.placeId != null) {
-                      controller.getPlaceLatLng(
-                        prediction.placeId!,
-                        isHome: false,
-                      );
-                    }
-                  },
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                child: Text(
+                  "Departure airport is taken from your flight (IATA + coordinates). "
+                  "You only need home + flight number.",
+                  style: TextStyle(fontSize: 13, color: Colors.black54),
                 ),
               ),
               const SizedBox(height: 12),
@@ -109,6 +89,10 @@ class HomeScreen extends StatelessWidget {
                     ? const CircularProgressIndicator()
                     : Column(
                         children: [
+                          _infoCard(
+                            "Departure airport (from flight)",
+                            controller.departureAirportLabel.value,
+                          ),
                           _infoCard(
                             "Home to Airport Distance",
                             controller.distance.value,
@@ -225,21 +209,55 @@ class HomeScreen extends StatelessWidget {
 
   Widget _warningCard() {
     return Obx(() {
-      if (controller.lateWarning.value.isEmpty) return const SizedBox.shrink();
-      return Card(
-        color: Colors.red.shade700,
-        child: ListTile(
-          leading: const Icon(Icons.warning_amber_rounded, color: Colors.white),
-          title: const Text(
-            "Time Alert",
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+      if (controller.lateWarning.value.isNotEmpty) {
+        return Card(
+          color: Colors.red.shade700,
+          child: ListTile(
+            leading: const Icon(
+              Icons.warning_amber_rounded,
+              color: Colors.white,
+            ),
+            title: const Text(
+              "Time Alert",
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            subtitle: Text(
+              controller.lateWarning.value,
+              style: const TextStyle(color: Colors.white),
+            ),
           ),
-          subtitle: Text(
-            controller.lateWarning.value,
-            style: const TextStyle(color: Colors.white),
+        );
+      }
+      final leave = controller.leaveHomeAt.value;
+      if (leave.isNotEmpty &&
+          !leave.startsWith("Not available") &&
+          controller.timingStatus.value.isNotEmpty &&
+          !controller.timingStatus.value.contains("could not be read")) {
+        return Card(
+          color: Colors.green.shade800,
+          child: ListTile(
+            leading: const Icon(
+              Icons.check_circle_outline,
+              color: Colors.white,
+            ),
+            title: const Text(
+              "Time alert",
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            subtitle: Text(
+              "${controller.timingStatus.value}\nLeave home by: $leave",
+              style: const TextStyle(color: Colors.white70),
+            ),
           ),
-        ),
-      );
+        );
+      }
+      return const SizedBox.shrink();
     });
   }
 

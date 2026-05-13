@@ -8,8 +8,6 @@ import '../services/api_service.dart';
 class TravelController extends GetxController {
   final TextEditingController homeController = TextEditingController();
   final FocusNode homeFocus = FocusNode();
-  final TextEditingController destController = TextEditingController();
-  final FocusNode destFocus = FocusNode();
   final TextEditingController flightController = TextEditingController();
   final TextEditingController connectionFlightController =
       TextEditingController();
@@ -41,6 +39,7 @@ class TravelController extends GetxController {
   final arrWeather = ''.obs;
   final depWeatherLabel = ''.obs;
   final arrWeatherLabel = ''.obs;
+  final departureAirportLabel = ''.obs;
   DateTime? _leaveAtDateTime;
   Timer? _warningTimer;
 
@@ -48,15 +47,13 @@ class TravelController extends GetxController {
   void onClose() {
     _warningTimer?.cancel();
     homeController.dispose();
-    destController.dispose();
     flightController.dispose();
     connectionFlightController.dispose();
     homeFocus.dispose();
-    destFocus.dispose();
     super.onClose();
   }
 
-  Future<void> getPlaceLatLng(String placeId, {required bool isHome}) async {
+  Future<void> getPlaceLatLng(String placeId) async {
     try {
       final url = Uri.parse(
         "https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&key=${ApiService.apiKey}",
@@ -69,13 +66,8 @@ class TravelController extends GetxController {
       final double lat = location['lat'];
       final double lng = location['lng'];
 
-      if (isHome) {
-        homeLat.value = lat;
-        homeLng.value = lng;
-      } else {
-        destLat.value = lat;
-        destLng.value = lng;
-      }
+      homeLat.value = lat;
+      homeLng.value = lng;
     } catch (_) {
       Get.snackbar("Location Error", "Failed to resolve selected place.");
     }
@@ -83,7 +75,9 @@ class TravelController extends GetxController {
 
   Future<void> getDistance() async {
     if (homeLat.value == 0.0 || destLat.value == 0.0) {
-      throw Exception("Please select both home and airport locations.");
+      throw Exception(
+        "Select your home location and ensure the flight has a departure airport.",
+      );
     }
     final result = await ApiService.getDistanceMatrix(
       homeLat.value,
@@ -121,10 +115,10 @@ class TravelController extends GetxController {
   Future<void> _analyzeSegmentWeather() async {
     if (flights.isEmpty) return;
     final first = flights.first;
-    final depLat = (first['dep_lat'] ?? 0.0) as double;
-    final depLng = (first['dep_lng'] ?? 0.0) as double;
-    final arrLat = (first['arr_lat'] ?? 0.0) as double;
-    final arrLng = (first['arr_lng'] ?? 0.0) as double;
+    final depLat = _readCoord(first['dep_lat']);
+    final depLng = _readCoord(first['dep_lng']);
+    final arrLat = _readCoord(first['arr_lat']);
+    final arrLng = _readCoord(first['arr_lng']);
     final depCity = (first['dep_city'] ?? '').toString();
     final arrCity = (first['arr_city'] ?? '').toString();
     depWeatherLabel.value = (first['dep_iata'] ?? 'DEP').toString();
@@ -159,17 +153,21 @@ class TravelController extends GetxController {
     try {
       isLoading.value = true;
       flights.clear();
-
+      departureAirportLabel.value = '';
+      distance.value = '';
+      duration.value = '';
+      traficDuration.value = '';
       if (flightController.text.trim().isEmpty) {
         throw Exception("Please enter at least one flight number.");
       }
-
-      await getDistance();
-      await analyzeWeather();
+      if (homeLat.value == 0.0 || homeLng.value == 0.0) {
+        throw Exception("Please select your home location.");
+      }
 
       final firstFlight = await ApiService.getFlightData(
         flightController.text.trim(),
       );
+      await _applyDepartureAirportFromFlight(firstFlight);
       flights.add(firstFlight);
 
       if (isConnecting.value &&
@@ -179,7 +177,30 @@ class TravelController extends GetxController {
         );
         flights.add(secondFlight);
       }
-      await _analyzeSegmentWeather();
+
+      try {
+        await getDistance();
+      } catch (_) {
+        distance.value = "Unavailable";
+        duration.value = "Unavailable";
+        traficDuration.value = "0 min";
+        Get.snackbar(
+          "Route",
+          "Could not get drive time; buffer uses 0 min for traffic.",
+        );
+      }
+      try {
+        await analyzeWeather();
+      } catch (_) {
+        flightRisk.value = "";
+        weatherDesc.value = "Weather unavailable";
+      }
+      try {
+        await _analyzeSegmentWeather();
+      } catch (_) {
+        depWeather.value = "";
+        arrWeather.value = "";
+      }
       _computeLeaveHomeTime();
     } catch (e) {
       Get.snackbar("Trip Error", e.toString().replaceFirst("Exception: ", ""));
@@ -188,12 +209,53 @@ class TravelController extends GetxController {
     }
   }
 
+  Future<void> _applyDepartureAirportFromFlight(
+    Map<String, dynamic> flight,
+  ) async {
+    double lat = _readCoord(flight['dep_lat']);
+    double lng = _readCoord(flight['dep_lng']);
+    final iata = (flight['dep_iata'] ?? '').toString();
+    final city = (flight['dep_city'] ?? '').toString();
+
+    if (lat == 0.0 || lng == 0.0) {
+      final resolved = await ApiService.geocodeDepartureAirport(
+        iata: iata,
+        city: city,
+      );
+      if (resolved == null) {
+        throw Exception(
+          "Departure airport has no coordinates in flight data and Geocoding failed. "
+          "Enable Geocoding API for your Google key, or pick a flight where AirLabs returns dep_lat/dep_lng.",
+        );
+      }
+      lat = resolved['lat']!;
+      lng = resolved['lng']!;
+      flight['dep_lat'] = lat;
+      flight['dep_lng'] = lng;
+    }
+
+    destLat.value = lat;
+    destLng.value = lng;
+    departureAirportLabel.value = city.isNotEmpty
+        ? '$iata — $city (from flight)'
+        : '$iata airport (from flight)';
+  }
+
+  double _readCoord(dynamic v) {
+    if (v == null) return 0.0;
+    if (v is num) return v.toDouble();
+    return double.tryParse(v.toString()) ?? 0.0;
+  }
+
   void _computeLeaveHomeTime() {
-    if (traficDuration.value.isEmpty || flights.isEmpty) return;
+    if (flights.isEmpty) return;
+
     final depText = (flights.first['departure'] ?? '').toString();
     final DateTime? departure = _parseApiDate(depText);
 
-    final Duration traffic = _parseHumanDuration(traficDuration.value);
+    final Duration traffic = traficDuration.value.trim().isEmpty
+        ? Duration.zero
+        : _parseHumanDuration(traficDuration.value);
     const Duration airportBuffer = Duration(hours: 3);
 
     final bool terminalChanged =
@@ -232,9 +294,11 @@ class TravelController extends GetxController {
 
     if (departure == null) {
       leaveHomeAt.value = "Not available (departure time missing)";
-      timingStatus.value = "Enter a flight that has valid scheduled departure.";
+      timingStatus.value =
+          "Flight departure time could not be read; fix API date format or pick another flight.";
       lateWarning.value = "";
       _leaveAtDateTime = null;
+      _warningTimer?.cancel();
       return;
     }
 
@@ -250,13 +314,13 @@ class TravelController extends GetxController {
     Duration total = drive + airportTime;
     for (int i = 0; i < flights.length; i++) {
       final seg = flights[i];
-      final dep = DateTime.tryParse((seg['departure'] ?? '').toString());
-      final arr = DateTime.tryParse((seg['arrival'] ?? '').toString());
+      final dep = _parseApiDate((seg['departure'] ?? '').toString());
+      final arr = _parseApiDate((seg['arrival'] ?? '').toString());
       if (dep != null && arr != null && arr.isAfter(dep)) {
         total += arr.difference(dep);
       }
       if (i < flights.length - 1) {
-        final nextDep = DateTime.tryParse(
+        final nextDep = _parseApiDate(
           (flights[i + 1]['departure'] ?? '').toString(),
         );
         if (arr != null && nextDep != null && nextDep.isAfter(arr)) {

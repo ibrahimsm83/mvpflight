@@ -79,6 +79,31 @@ class ApiService {
     }
   }
 
+  /// When flight APIs omit coordinates, resolve departure airport via Geocoding.
+  static Future<Map<String, double>?> geocodeDepartureAirport({
+    required String iata,
+    String city = '',
+  }) async {
+    final code = iata.trim().toUpperCase();
+    if (code.isEmpty || code == 'N/A') return null;
+    final query = city.trim().isNotEmpty
+        ? '$city $code airport'
+        : '$code airport';
+    final url = Uri.parse(
+      'https://maps.googleapis.com/maps/api/geocode/json?address=${Uri.encodeComponent(query)}&key=$apiKey',
+    );
+    final response = await http.get(url);
+    if (response.statusCode != 200) return null;
+    final data = jsonDecode(response.body);
+    if (data['status'] != 'OK' ||
+        data['results'] == null ||
+        (data['results'] as List).isEmpty) {
+      return null;
+    }
+    final loc = data['results'][0]['geometry']['location'];
+    return {'lat': _toDouble(loc['lat']), 'lng': _toDouble(loc['lng'])};
+  }
+
   static Future<Map<String, dynamic>> getWeather(double lat, double lng) async {
     final url = Uri.parse(
       "https://api.openweathermap.org/data/2.5/weather?"

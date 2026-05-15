@@ -39,7 +39,24 @@ class TravelController extends GetxController {
   final arrWeather = ''.obs;
   final depWeatherLabel = ''.obs;
   final arrWeatherLabel = ''.obs;
+  final weatherCards = <Map<String, String>>[].obs;
   final departureAirportLabel = ''.obs;
+  final selectedFlightDate = Rx<DateTime>(
+    DateTime(
+      DateTime.now().year,
+      DateTime.now().month,
+      DateTime.now().day,
+    ),
+  );
+  final selectedFlightDateLabel = ''.obs;
+  final flightMissedWarning = ''.obs;
+  final timeUntilDeparture = ''.obs;
+  final timeUntilLeaveHome = ''.obs;
+  final rainWarning = ''.obs;
+  final rainForecastInfo = ''.obs;
+  final rainDrivePenalty = ''.obs;
+  final adjustedDriveTime = ''.obs;
+  Duration _rainPenaltyDuration = Duration.zero;
   DateTime? _leaveAtDateTime;
   Timer? _warningTimer;
 
@@ -112,41 +129,151 @@ class TravelController extends GetxController {
     }
   }
 
+  void _normalizeAllFlightTimes() {
+    if (flights.isEmpty) return;
+    ApiService.alignTimesToSelectedDate(
+      flights.first,
+      selectedFlightDate.value,
+    );
+    if (flights.length > 1) {
+      final hubArr = _parseApiDate((flights[0]['arrival'] ?? '').toString());
+      if (hubArr != null) {
+        ApiService.alignConnectingLeg(flights[1], hubArr);
+      } else {
+        ApiService.alignTimesToSelectedDate(
+          flights[1],
+          selectedFlightDate.value,
+        );
+      }
+    }
+  }
+
   Future<void> _analyzeSegmentWeather() async {
     if (flights.isEmpty) return;
+    weatherCards.clear();
     final first = flights.first;
-    final depLat = _readCoord(first['dep_lat']);
-    final depLng = _readCoord(first['dep_lng']);
-    final arrLat = _readCoord(first['arr_lat']);
-    final arrLng = _readCoord(first['arr_lng']);
-    final depCity = (first['dep_city'] ?? '').toString();
-    final arrCity = (first['arr_city'] ?? '').toString();
-    depWeatherLabel.value = (first['dep_iata'] ?? 'DEP').toString();
-    arrWeatherLabel.value = (first['arr_iata'] ?? 'ARR').toString();
+    final depIata = (first['dep_iata'] ?? 'DEP').toString();
+    final arrIata = (first['arr_iata'] ?? 'ARR').toString();
+    depWeatherLabel.value = depIata;
+    arrWeatherLabel.value = arrIata;
 
-    if (depLat != 0.0 && depLng != 0.0) {
-      final depW = await ApiService.getWeather(depLat, depLng);
-      depWeather.value =
-          "${depW['condition']} (${depW['description']}) ${depW['temp']}C";
-    } else if (depCity.isNotEmpty) {
-      final depW = await ApiService.getWeatherByCity(depCity);
-      depWeather.value =
-          "${depW['condition']} (${depW['description']}) ${depW['temp']}C";
-    } else {
-      depWeather.value = "Not available";
+    final depText = await _fetchWeatherForStop(
+      title: '$depIata — Departure airport',
+      iata: depIata,
+      lat: _readCoord(first['dep_lat']),
+      lng: _readCoord(first['dep_lng']),
+      city: (first['dep_city'] ?? '').toString(),
+      targetTime: _parseApiDate((first['departure'] ?? '').toString()),
+    );
+    depWeather.value = depText;
+    weatherCards.add({'title': '$depIata — Departure airport', 'body': depText});
+
+    final arrText = await _fetchWeatherForStop(
+      title: '$arrIata — Destination',
+      iata: arrIata,
+      lat: _readCoord(first['arr_lat']),
+      lng: _readCoord(first['arr_lng']),
+      city: (first['arr_city'] ?? '').toString(),
+      targetTime: _parseApiDate((first['arrival'] ?? '').toString()),
+    );
+    arrWeather.value = arrText;
+    weatherCards.add({'title': '$arrIata — Destination', 'body': arrText});
+
+    if (flights.length > 1) {
+      final second = flights[1];
+      final finalIata = (second['arr_iata'] ?? 'ARR').toString();
+      final finalText = await _fetchWeatherForStop(
+        title: '$finalIata — Final destination (connecting)',
+        iata: finalIata,
+        lat: _readCoord(second['arr_lat']),
+        lng: _readCoord(second['arr_lng']),
+        city: (second['arr_city'] ?? '').toString(),
+        targetTime: _parseApiDate((second['arrival'] ?? '').toString()),
+      );
+      weatherCards.add({
+        'title': '$finalIata — Final destination',
+        'body': finalText,
+      });
+    }
+  }
+
+  Future<void> _ensureAllAirportCoordinates() async {
+    for (final flight in flights) {
+      await _ensureAirportCoordinates(flight, isArrival: false);
+      await _ensureAirportCoordinates(flight, isArrival: true);
+    }
+  }
+
+  Future<void> _ensureAirportCoordinates(
+    Map<String, dynamic> flight, {
+    required bool isArrival,
+  }) async {
+    final latKey = isArrival ? 'arr_lat' : 'dep_lat';
+    final lngKey = isArrival ? 'arr_lng' : 'dep_lng';
+    final iataKey = isArrival ? 'arr_iata' : 'dep_iata';
+    final cityKey = isArrival ? 'arr_city' : 'dep_city';
+
+    if (_readCoord(flight[latKey]) != 0.0 && _readCoord(flight[lngKey]) != 0.0) {
+      return;
     }
 
-    if (arrLat != 0.0 && arrLng != 0.0) {
-      final arrW = await ApiService.getWeather(arrLat, arrLng);
-      arrWeather.value =
-          "${arrW['condition']} (${arrW['description']}) ${arrW['temp']}C";
-    } else if (arrCity.isNotEmpty) {
-      final arrW = await ApiService.getWeatherByCity(arrCity);
-      arrWeather.value =
-          "${arrW['condition']} (${arrW['description']}) ${arrW['temp']}C";
-    } else {
-      arrWeather.value = "Not available";
+    final iata = (flight[iataKey] ?? '').toString();
+    final city = (flight[cityKey] ?? '').toString();
+    final resolved = await ApiService.geocodeAirport(iata: iata, city: city);
+    if (resolved != null) {
+      flight[latKey] = resolved['lat'];
+      flight[lngKey] = resolved['lng'];
     }
+  }
+
+  Future<String> _fetchWeatherForStop({
+    required String title,
+    required String iata,
+    required double lat,
+    required double lng,
+    required String city,
+    DateTime? targetTime,
+  }) async {
+    try {
+      double useLat = lat;
+      double useLng = lng;
+
+      if (useLat == 0.0 || useLng == 0.0) {
+        final geo = await ApiService.geocodeAirport(iata: iata, city: city);
+        if (geo != null) {
+          useLat = geo['lat']!;
+          useLng = geo['lng']!;
+        }
+      }
+
+      if (targetTime != null &&
+          targetTime.isAfter(DateTime.now()) &&
+          useLat != 0.0 &&
+          useLng != 0.0) {
+        final forecast = await ApiService.getForecastForDeparture(
+          lat: useLat,
+          lng: useLng,
+          targetTime: targetTime,
+        );
+        return "Forecast: ${forecast['condition']} — ${forecast['description']} "
+            "(${forecast['pop_percent']}% rain)";
+      }
+      if (useLat != 0.0 && useLng != 0.0) {
+        final w = await ApiService.getWeather(useLat, useLng);
+        return "${w['condition']} (${w['description']}) ${w['temp']}C";
+      }
+      if (iata.isNotEmpty && iata != 'N/A') {
+        final w = await ApiService.getWeatherByCity(iata);
+        return "${w['condition']} (${w['description']}) ${w['temp']}C";
+      }
+      if (city.isNotEmpty) {
+        final w = await ApiService.getWeatherByCity(city);
+        return "${w['condition']} (${w['description']}) ${w['temp']}C";
+      }
+    } catch (e) {
+      return 'Weather unavailable ($iata): ${e.toString().replaceFirst('Exception: ', '')}';
+    }
+    return 'Not available — enable Geocoding API or check OpenWeather key';
   }
 
   Future<void> loadTripSummary() async {
@@ -157,6 +284,14 @@ class TravelController extends GetxController {
       distance.value = '';
       duration.value = '';
       traficDuration.value = '';
+      rainWarning.value = '';
+      rainForecastInfo.value = '';
+      rainDrivePenalty.value = '';
+      adjustedDriveTime.value = '';
+      _rainPenaltyDuration = Duration.zero;
+      flightMissedWarning.value = '';
+      timeUntilDeparture.value = '';
+      timeUntilLeaveHome.value = '';
       if (flightController.text.trim().isEmpty) {
         throw Exception("Please enter at least one flight number.");
       }
@@ -166,6 +301,7 @@ class TravelController extends GetxController {
 
       final firstFlight = await ApiService.getFlightData(
         flightController.text.trim(),
+        flightDate: selectedFlightDate.value,
       );
       await _applyDepartureAirportFromFlight(firstFlight);
       flights.add(firstFlight);
@@ -174,9 +310,12 @@ class TravelController extends GetxController {
           connectionFlightController.text.trim().isNotEmpty) {
         final secondFlight = await ApiService.getFlightData(
           connectionFlightController.text.trim(),
+          flightDate: selectedFlightDate.value,
         );
         flights.add(secondFlight);
       }
+      _normalizeAllFlightTimes();
+      await _ensureAllAirportCoordinates();
 
       try {
         await getDistance();
@@ -188,6 +327,11 @@ class TravelController extends GetxController {
           "Route",
           "Could not get drive time; buffer uses 0 min for traffic.",
         );
+      }
+      try {
+        await _applyDepartureDayRainForecast();
+      } catch (_) {
+        rainForecastInfo.value = "Travel-day forecast unavailable";
       }
       try {
         await analyzeWeather();
@@ -218,7 +362,7 @@ class TravelController extends GetxController {
     final city = (flight['dep_city'] ?? '').toString();
 
     if (lat == 0.0 || lng == 0.0) {
-      final resolved = await ApiService.geocodeDepartureAirport(
+      final resolved = await ApiService.geocodeAirport(
         iata: iata,
         city: city,
       );
@@ -247,15 +391,82 @@ class TravelController extends GetxController {
     return double.tryParse(v.toString()) ?? 0.0;
   }
 
+  Future<void> _applyDepartureDayRainForecast() async {
+    if (flights.isEmpty) return;
+    final depText = (flights.first['departure'] ?? '').toString();
+    final departure = _parseApiDate(depText);
+    if (departure == null) {
+      rainForecastInfo.value = "Set a flight with valid departure time for rain forecast";
+      return;
+    }
+
+    final lat = destLat.value;
+    final lng = destLng.value;
+    if (lat == 0.0 || lng == 0.0) return;
+
+    // Forecast around when user would drive (~3h before departure).
+    final travelWindow = departure.subtract(const Duration(hours: 3));
+
+    final forecast = await ApiService.getForecastForDeparture(
+      lat: lat,
+      lng: lng,
+      targetTime: travelWindow,
+    );
+
+    final penaltyMin = _toInt(forecast['drive_penalty_minutes']);
+    _rainPenaltyDuration = Duration(minutes: penaltyMin);
+    final iata = (flights.first['dep_iata'] ?? 'DEP').toString();
+    final pop = forecast['pop_percent'];
+    final desc = forecast['description'];
+    final slot = forecast['forecast_slot'];
+
+    rainForecastInfo.value =
+        "$iata on travel day (~${travelWindow.hour.toString().padLeft(2, '0')}:${travelWindow.minute.toString().padLeft(2, '0')}): "
+        "${forecast['condition']} — $desc ($pop% rain chance, forecast slot $slot)";
+
+    if (forecast['rain_expected'] == true) {
+      rainDrivePenalty.value = _formatDuration(_rainPenaltyDuration);
+      final base = traficDuration.value.trim().isEmpty
+          ? Duration.zero
+          : _parseHumanDuration(traficDuration.value);
+      adjustedDriveTime.value = _formatDuration(base + _rainPenaltyDuration);
+      rainWarning.value =
+          "Rain expected on your travel day. Extra $penaltyMin min added to drive time "
+          "(traffic is usually slower than a normal dry day). Leave earlier.";
+      final cond = (forecast['condition'] ?? '').toString();
+      if (cond.toLowerCase().contains('thunder')) {
+        flightRisk.value = "High delay risk — thunderstorm forecast on travel day";
+      } else {
+        flightRisk.value =
+            "Possible delay — rain forecast ($pop% chance) on travel day";
+      }
+    } else {
+      rainDrivePenalty.value = "0 min";
+      rainWarning.value = "";
+      adjustedDriveTime.value = traficDuration.value;
+    }
+  }
+
+  int _toInt(dynamic v) {
+    if (v == null) return 0;
+    if (v is int) return v;
+    if (v is num) return v.toInt();
+    return int.tryParse(v.toString()) ?? 0;
+  }
+
   void _computeLeaveHomeTime() {
     if (flights.isEmpty) return;
 
     final depText = (flights.first['departure'] ?? '').toString();
     final DateTime? departure = _parseApiDate(depText);
 
-    final Duration traffic = traficDuration.value.trim().isEmpty
+    final Duration baseTraffic = traficDuration.value.trim().isEmpty
         ? Duration.zero
         : _parseHumanDuration(traficDuration.value);
+    final Duration traffic = baseTraffic + _rainPenaltyDuration;
+    if (_rainPenaltyDuration > Duration.zero) {
+      adjustedDriveTime.value = _formatDuration(traffic);
+    }
     const Duration airportBuffer = Duration(hours: 3);
 
     final bool terminalChanged =
@@ -307,7 +518,122 @@ class TravelController extends GetxController {
     leaveHomeAt.value =
         "${leaveTime.year}-${leaveTime.month.toString().padLeft(2, '0')}-${leaveTime.day.toString().padLeft(2, '0')} "
         "${leaveTime.hour.toString().padLeft(2, '0')}:${leaveTime.minute.toString().padLeft(2, '0')}";
+    _updateFlightTimelineStatus(departure, leaveTime);
     _startWarningClock();
+  }
+
+  bool _isSelectedDateToday() {
+    final d = selectedFlightDate.value;
+    final t = DateTime.now();
+    return d.year == t.year && d.month == t.month && d.day == t.day;
+  }
+
+  void _updateFlightTimelineStatus(DateTime departure, DateTime leaveTime) {
+    final now = DateTime.now();
+    final status = (flights.first['status'] ?? '').toString();
+    final tripDay = selectedFlightDateLabel.value;
+
+    if (_isFlightDeparted(departure, status)) {
+      flightMissedWarning.value =
+          "Flight missed — this flight already departed at "
+          "${_formatDateTimeDisplay(departure)}. You cannot catch this flight now.";
+      timeUntilDeparture.value =
+          "Departed ${_formatDuration(now.difference(departure))} ago";
+      timeUntilLeaveHome.value = "N/A — flight already left";
+      timingStatus.value = "Flight has departed. Plan a new booking or next flight.";
+      lateWarning.value = "";
+      _leaveAtDateTime = null;
+      _warningTimer?.cancel();
+      return;
+    }
+
+    flightMissedWarning.value = "";
+
+    if (!_isSelectedDateToday()) {
+      timeUntilDeparture.value =
+          "Flight on $tripDay — departs ${_formatDateTimeDisplay(departure)} "
+          "(in ${_formatDuration(departure.difference(now))} from now)";
+      timeUntilLeaveHome.value =
+          "Leave home on $tripDay at ${_formatDateTimeDisplay(leaveTime)} "
+          "(in ${_formatDuration(leaveTime.difference(now))} from now)";
+      timingStatus.value =
+          "Upcoming trip ($tripDay) — not using today's late alert.";
+      lateWarning.value = "";
+      return;
+    }
+
+    if (departure.isAfter(now)) {
+      timeUntilDeparture.value =
+          "Departure in ${_formatDuration(departure.difference(now))}";
+      if (leaveTime.isAfter(now)) {
+        timeUntilLeaveHome.value =
+            "Recommended leave in ${_formatDuration(leaveTime.difference(now))}";
+      } else {
+        timeUntilLeaveHome.value = "Leave time already passed for this plan";
+      }
+    } else {
+      timeUntilDeparture.value = "Departure time is very soon or just passed";
+      timeUntilLeaveHome.value = "";
+    }
+  }
+
+  bool _isFlightDeparted(DateTime departure, String status) {
+    if (!_isSelectedDateToday()) return false;
+
+    final now = DateTime.now();
+    if (departure.isAfter(now.add(const Duration(minutes: 5)))) return false;
+
+    final s = status.toLowerCase();
+    if (s == 'scheduled') {
+      return departure.isBefore(now.subtract(const Duration(minutes: 20)));
+    }
+    if (s == 'landed' || s == 'active' || s.contains('en-route')) {
+      return true;
+    }
+    return departure.isBefore(now.subtract(const Duration(minutes: 20)));
+  }
+
+  String _formatDateTimeDisplay(DateTime dt) {
+    return "${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')} "
+        "${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}";
+  }
+
+  Future<void> pickFlightDate(BuildContext context) async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: selectedFlightDate.value,
+      firstDate: DateTime.now().subtract(const Duration(days: 1)),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+    );
+    if (picked != null) {
+      selectedFlightDate.value = DateTime(
+        picked.year,
+        picked.month,
+        picked.day,
+      );
+      _refreshSelectedDateLabel();
+    }
+  }
+
+  void _refreshSelectedDateLabel() {
+    final d = selectedFlightDate.value;
+    final today = DateTime.now();
+    final isToday = d.year == today.year &&
+        d.month == today.month &&
+        d.day == today.day;
+    final tomorrow = today.add(const Duration(days: 1));
+    final isTomorrow = d.year == tomorrow.year &&
+        d.month == tomorrow.month &&
+        d.day == tomorrow.day;
+    final dateStr =
+        "${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
+    if (isToday) {
+      selectedFlightDateLabel.value = "Today ($dateStr)";
+    } else if (isTomorrow) {
+      selectedFlightDateLabel.value = "Tomorrow ($dateStr)";
+    } else {
+      selectedFlightDateLabel.value = dateStr;
+    }
   }
 
   String _calculateTotalJourney(Duration drive, Duration airportTime) {
@@ -340,7 +666,25 @@ class TravelController extends GetxController {
   }
 
   void _checkLateWarning() {
+    if (flightMissedWarning.value.isNotEmpty) return;
     if (_leaveAtDateTime == null) return;
+
+    if (!_isSelectedDateToday()) {
+      lateWarning.value = "";
+      final remaining = _leaveAtDateTime!.difference(DateTime.now());
+      if (remaining.isNegative) {
+        timingStatus.value =
+            "Selected trip day has passed — pick a new date or flight.";
+      } else {
+        timingStatus.value =
+            "Trip on ${selectedFlightDateLabel.value} — leave home in "
+            "${_formatDuration(remaining)} (countdown from today).";
+        timeUntilLeaveHome.value =
+            "Leave home in ${_formatDuration(remaining)}";
+      }
+      return;
+    }
+
     final now = DateTime.now();
     if (now.isAfter(_leaveAtDateTime!)) {
       lateWarning.value =
@@ -348,13 +692,16 @@ class TravelController extends GetxController {
       timingStatus.value = "Late: device time is greater than leave time.";
     } else {
       final remaining = _leaveAtDateTime!.difference(now);
-      final mins = remaining.inMinutes;
-      if (mins <= 10) {
-        timingStatus.value = "Leave now. Only $mins min left.";
-      } else {
-        timingStatus.value = "On track. $mins min left to leave.";
-      }
+      timingStatus.value =
+          "On track — leave in ${_formatDuration(remaining)}.";
       lateWarning.value = "";
+      if (flights.isNotEmpty) {
+        final dep = _parseApiDate((flights.first['departure'] ?? '').toString());
+        if (dep != null && dep.isAfter(now)) {
+          timeUntilLeaveHome.value =
+              "Recommended leave in ${_formatDuration(remaining)}";
+        }
+      }
     }
   }
 
@@ -377,15 +724,19 @@ class TravelController extends GetxController {
   }
 
   String _formatDuration(Duration d) {
-    final hours = d.inHours;
+    if (d.isNegative) return _formatDuration(d.abs());
+    final days = d.inDays;
+    final hours = d.inHours % 24;
     final mins = d.inMinutes % 60;
-    if (hours == 0) return "$mins min";
-    return "$hours h $mins min";
+    if (days > 0) return "$days d $hours h $mins min";
+    if (hours > 0) return "$hours h $mins min";
+    return "$mins min";
   }
 
   @override
   void onInit() {
     super.onInit();
+    _refreshSelectedDateLabel();
     timingStatus.value = "Generate summary to see leave-time alerts.";
   }
 }

@@ -46,6 +46,16 @@ class HomeScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 12),
+              Obx(
+                () => OutlinedButton.icon(
+                  onPressed: () => controller.pickFlightDate(context),
+                  icon: const Icon(Icons.calendar_today),
+                  label: Text(
+                    "Flight date: ${controller.selectedFlightDateLabel.value}",
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
               TextField(
                 controller: controller.flightController,
                 decoration: const InputDecoration(
@@ -90,9 +100,22 @@ class HomeScreen extends StatelessWidget {
                     : Column(
                         children: [
                           _infoCard(
+                            "Selected flight date",
+                            controller.selectedFlightDateLabel.value,
+                          ),
+                          _infoCard(
                             "Departure airport (from flight)",
                             controller.departureAirportLabel.value,
                           ),
+                          _infoCard(
+                            "Time until departure",
+                            controller.timeUntilDeparture.value,
+                          ),
+                          _infoCard(
+                            "Time until leave home",
+                            controller.timeUntilLeaveHome.value,
+                          ),
+                          _missedFlightCard(),
                           _infoCard(
                             "Home to Airport Distance",
                             controller.distance.value,
@@ -105,6 +128,19 @@ class HomeScreen extends StatelessWidget {
                             "Drive Time (With Traffic)",
                             controller.traficDuration.value,
                           ),
+                          _infoCard(
+                            "Travel-day forecast (departure airport)",
+                            controller.rainForecastInfo.value,
+                          ),
+                          _infoCard(
+                            "Rain drive adjustment",
+                            controller.rainDrivePenalty.value,
+                          ),
+                          _infoCard(
+                            "Planned drive (traffic + rain)",
+                            controller.adjustedDriveTime.value,
+                          ),
+                          _rainWarningCard(),
                           _infoCard(
                             "Recommended Leave Home At",
                             controller.leaveHomeAt.value,
@@ -191,16 +227,64 @@ class HomeScreen extends StatelessWidget {
 
   Widget _countryWeatherCard() {
     return Obx(() {
-      if (controller.depWeather.value.isEmpty &&
-          controller.arrWeather.value.isEmpty) {
+      if (controller.weatherCards.isEmpty) {
+        return const SizedBox.shrink();
+      }
+      return Column(
+        children: controller.weatherCards
+            .map(
+              (card) => Card(
+                color: Colors.blueGrey.shade50,
+                child: ListTile(
+                  leading: const Icon(Icons.cloud),
+                  title: Text(card['title'] ?? 'Weather'),
+                  subtitle: Text(card['body'] ?? ''),
+                ),
+              ),
+            )
+            .toList(),
+      );
+    });
+  }
+
+  Widget _missedFlightCard() {
+    return Obx(() {
+      if (controller.flightMissedWarning.value.isEmpty) {
         return const SizedBox.shrink();
       }
       return Card(
+        color: Colors.red.shade900,
         child: ListTile(
-          title: const Text("Weather (Both Sides)"),
+          leading: const Icon(Icons.flight_takeoff, color: Colors.white),
+          title: const Text(
+            "Flight missed",
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
           subtitle: Text(
-            "${controller.depWeatherLabel.value} Weather: ${controller.depWeather.value}\n"
-            "${controller.arrWeatherLabel.value} Weather: ${controller.arrWeather.value}",
+            controller.flightMissedWarning.value,
+            style: const TextStyle(color: Colors.white),
+          ),
+        ),
+      );
+    });
+  }
+
+  Widget _rainWarningCard() {
+    return Obx(() {
+      if (controller.rainWarning.value.isEmpty) {
+        return const SizedBox.shrink();
+      }
+      return Card(
+        color: Colors.orange.shade800,
+        child: ListTile(
+          leading: const Icon(Icons.umbrella, color: Colors.white),
+          title: const Text(
+            "Rain warning",
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+          subtitle: Text(
+            controller.rainWarning.value,
+            style: const TextStyle(color: Colors.white),
           ),
         ),
       );
@@ -232,10 +316,14 @@ class HomeScreen extends StatelessWidget {
         );
       }
       final leave = controller.leaveHomeAt.value;
+      if (controller.flightMissedWarning.value.isNotEmpty) {
+        return const SizedBox.shrink();
+      }
       if (leave.isNotEmpty &&
           !leave.startsWith("Not available") &&
           controller.timingStatus.value.isNotEmpty &&
-          !controller.timingStatus.value.contains("could not be read")) {
+          !controller.timingStatus.value.contains("could not be read") &&
+          !controller.timingStatus.value.contains("already departed")) {
         return Card(
           color: Colors.green.shade800,
           child: ListTile(

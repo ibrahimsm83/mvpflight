@@ -79,8 +79,8 @@ class ApiService {
     }
   }
 
-  /// When flight APIs omit coordinates, resolve departure airport via Geocoding.
-  static Future<Map<String, double>?> geocodeDepartureAirport({
+  /// When flight APIs omit coordinates, resolve airport via Google Geocoding.
+  static Future<Map<String, double>?> geocodeAirport({
     required String iata,
     String city = '',
   }) async {
@@ -104,6 +104,12 @@ class ApiService {
     return {'lat': _toDouble(loc['lat']), 'lng': _toDouble(loc['lng'])};
   }
 
+  @Deprecated('Use geocodeAirport')
+  static Future<Map<String, double>?> geocodeDepartureAirport({
+    required String iata,
+    String city = '',
+  }) => geocodeAirport(iata: iata, city: city);
+
   static Future<Map<String, dynamic>> getWeather(double lat, double lng) async {
     final url = Uri.parse(
       "https://api.openweathermap.org/data/2.5/weather?"
@@ -126,6 +132,79 @@ class ApiService {
     };
   }
 
+  /// 5-day / 3-hour forecast at departure airport for [targetTime] (local).
+  static Future<Map<String, dynamic>> getForecastForDeparture({
+    required double lat,
+    required double lng,
+    required DateTime targetTime,
+  }) async {
+    final url = Uri.parse(
+      'https://api.openweathermap.org/data/2.5/forecast?'
+      'lat=$lat&lon=$lng&appid=$weatherKey&units=metric',
+    );
+    final response = await http.get(url);
+    if (response.statusCode != 200) {
+      throw Exception('Forecast API failed: ${response.statusCode}');
+    }
+    final data = jsonDecode(response.body);
+    final list = data['list'] as List?;
+    if (list == null || list.isEmpty) {
+      throw Exception('No forecast data');
+    }
+
+    Map<String, dynamic>? closest;
+    int bestDiff = 1 << 30;
+    for (final item in list) {
+      final dtSec = _toInt(item['dt']);
+      if (dtSec == 0) continue;
+      final slot = DateTime.fromMillisecondsSinceEpoch(
+        dtSec * 1000,
+        isUtc: true,
+      ).toLocal();
+      final diff = slot.difference(targetTime).inMinutes.abs();
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        closest = Map<String, dynamic>.from(item as Map);
+        closest['_slot_local'] = slot.toIso8601String();
+      }
+    }
+    if (closest == null) throw Exception('Could not match forecast slot');
+
+    final weather = (closest['weather'] as List).first as Map;
+    final condition = (weather['main'] ?? '').toString();
+    final description = (weather['description'] ?? '').toString();
+    final pop = ((closest['pop'] ?? 0) as num).toDouble();
+    final popPercent = (pop * 100).round();
+
+    final penalty = _rainDrivePenaltyMinutes(condition, pop);
+    final rainExpected = penalty > 0;
+
+    return {
+      'condition': condition,
+      'description': description,
+      'pop': pop,
+      'pop_percent': popPercent,
+      'rain_expected': rainExpected,
+      'drive_penalty_minutes': penalty,
+      'forecast_slot': closest['_slot_local'],
+      'target_time': targetTime.toIso8601String(),
+    };
+  }
+
+  static int _rainDrivePenaltyMinutes(String condition, double pop) {
+    final c = condition.toLowerCase();
+    if (c.contains('thunder')) return 40;
+    if (c.contains('rain')) {
+      if (pop >= 0.5) return 30;
+      if (pop >= 0.3) return 20;
+      return 15;
+    }
+    if (c.contains('drizzle')) return 15;
+    if (pop >= 0.5) return 25;
+    if (pop >= 0.4) return 20;
+    return 0;
+  }
+
   static Future<Map<String, dynamic>> getWeatherByCity(String city) async {
     final url = Uri.parse(
       "https://api.openweathermap.org/data/2.5/weather?"
@@ -146,23 +225,108 @@ class ApiService {
     };
   }
 
-  static Future<Map<String, dynamic>> getFlightData(String flightNo) async {
+  static Future<Map<String, dynamic>> getFlightData(
+    String flightNo, {
+    DateTime? flightDate,
+  }) async {
     final normalized = flightNo.trim().toUpperCase();
-    final aviationData = await _fetchFromAviationstack(normalized);
-    final airLabsData = await _fetchFromAirlabs(normalized);
+    final date = flightDate ?? DateTime.now();
+    final aviationData = await _fetchFromAviationstack(normalized, date);
+    final airLabsData = await _fetchFromAirlabs(normalized, date);
 
     if (aviationData == null && airLabsData == null) {
-      throw Exception("Flight not found on both providers");
+      throw Exception(
+        "Flight not found for ${_formatDateParam(date)}. Try another date or flight number.",
+      );
     }
-    return _mergeFlightData(aviationData, airLabsData);
+    final merged = _mergeFlightData(aviationData, airLabsData);
+    merged['flight_date'] = _formatDateParam(date);
+    alignTimesToSelectedDate(merged, date);
+    return merged;
+  }
+
+  static String _formatDateParam(DateTime d) {
+    return '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+  }
+
+  /// Forces departure/arrival onto [selectedDay] using API time-of-day only.
+  static void alignTimesToSelectedDate(
+    Map<String, dynamic> flight,
+    DateTime selectedDay,
+  ) {
+    final depRaw = _parseDateTime(flight['departure']);
+    final arrRaw = _parseDateTime(flight['arrival']);
+
+    if (depRaw != null) {
+      final dep = DateTime(
+        selectedDay.year,
+        selectedDay.month,
+        selectedDay.day,
+        depRaw.hour,
+        depRaw.minute,
+      );
+      flight['departure'] = dep.toIso8601String();
+
+      if (arrRaw != null) {
+        final duration = arrRaw.isAfter(depRaw)
+            ? arrRaw.difference(depRaw)
+            : const Duration(hours: 2);
+        flight['arrival'] = dep.add(duration).toIso8601String();
+      }
+    }
+  }
+
+  static void alignConnectingLeg(
+    Map<String, dynamic> leg,
+    DateTime hubArrival,
+  ) {
+    final depRaw = _parseDateTime(leg['departure']);
+    final arrRaw = _parseDateTime(leg['arrival']);
+    var dep = DateTime(
+      hubArrival.year,
+      hubArrival.month,
+      hubArrival.day,
+      depRaw?.hour ?? hubArrival.hour,
+      depRaw?.minute ?? (hubArrival.minute + 90) % 60,
+    );
+    if (!dep.isAfter(hubArrival)) {
+      dep = hubArrival.add(const Duration(hours: 2));
+    }
+    leg['departure'] = dep.toIso8601String();
+    if (arrRaw != null && depRaw != null) {
+      final duration = arrRaw.isAfter(depRaw)
+          ? arrRaw.difference(depRaw)
+          : const Duration(hours: 3);
+      leg['arrival'] = dep.add(duration).toIso8601String();
+    }
+  }
+
+  static DateTime? _parseDateTime(dynamic raw) {
+    if (raw == null) return null;
+    final s = raw.toString().trim();
+    if (s.isEmpty || s.toLowerCase() == 'n/a') return null;
+    if (RegExp(r'^\d+$').hasMatch(s)) {
+      final sec = int.tryParse(s);
+      if (sec != null) {
+        return DateTime.fromMillisecondsSinceEpoch(
+          sec * 1000,
+          isUtc: true,
+        ).toLocal();
+      }
+    }
+    final direct = DateTime.tryParse(s);
+    if (direct != null) return direct.toLocal();
+    return DateTime.tryParse(s.replaceFirst(' ', 'T'))?.toLocal();
   }
 
   static Future<Map<String, dynamic>?> _fetchFromAviationstack(
     String flightNo,
+    DateTime flightDate,
   ) async {
     if (aviationStackKey == "YOUR_AVIATIONSTACK_KEY") return null;
+    final dateStr = _formatDateParam(flightDate);
     final url = Uri.parse(
-      "https://api.aviationstack.com/v1/flights?access_key=$aviationStackKey&flight_iata=$flightNo",
+      "https://api.aviationstack.com/v1/flights?access_key=$aviationStackKey&flight_iata=$flightNo&flight_date=$dateStr",
     );
     final response = await http.get(url);
     if (response.statusCode != 200) return null;
@@ -213,7 +377,17 @@ class ApiService {
 
   static Future<Map<String, dynamic>?> _fetchFromAirlabs(
     String flightNo,
+    DateTime flightDate,
   ) async {
+    final schedule = await _fetchFromAirlabsSchedule(flightNo, flightDate);
+    if (schedule != null) return schedule;
+
+    final today = DateTime.now();
+    final isToday = flightDate.year == today.year &&
+        flightDate.month == today.month &&
+        flightDate.day == today.day;
+    if (!isToday) return null;
+
     final url =
         "https://airlabs.co/api/v9/flight?flight_iata=$flightNo&api_key=$flightKey";
     final response = await http.get(Uri.parse(url));
@@ -223,10 +397,51 @@ class ApiService {
     if (data['response'] == null) return null;
 
     final flight = data['response'];
+    return _mapAirlabsFlight(flight, provider: "airlabs-live");
+  }
+
+  static Future<Map<String, dynamic>?> _fetchFromAirlabsSchedule(
+    String flightNo,
+    DateTime flightDate,
+  ) async {
+    final url = Uri.parse(
+      'https://airlabs.co/api/v9/schedules?flight_iata=$flightNo&api_key=$flightKey&limit=30',
+    );
+    final response = await http.get(url);
+    if (response.statusCode != 200) return null;
+    final data = json.decode(response.body);
+    final list = data['response'];
+    if (list is! List || list.isEmpty) return null;
+
+    Map<String, dynamic>? best;
+    int bestDiff = 1 << 30;
+    for (final item in list) {
+      if (item is! Map) continue;
+      final dep = _parseDateTime(item['dep_time'] ?? item['dep_time_utc']);
+      if (dep == null) continue;
+      if (!_sameCalendarDay(dep, flightDate)) continue;
+      final diff = dep.difference(flightDate).inMinutes.abs();
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        best = Map<String, dynamic>.from(item);
+      }
+    }
+    if (best == null) return null;
+    return _mapAirlabsFlight(best, provider: "airlabs-schedule");
+  }
+
+  static bool _sameCalendarDay(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+  static Map<String, dynamic> _mapAirlabsFlight(
+    Map flight, {
+    required String provider,
+  }) {
     return {
-      "status": _normalizeStatus((flight['status'] ?? "Unknown").toString()),
-      "departure": flight['dep_time'] ?? "N/A",
-      "arrival": flight['arr_time'] ?? "N/A",
+      "status": _normalizeStatus((flight['status'] ?? "scheduled").toString()),
+      "departure": flight['dep_time'] ?? flight['dep_time_utc'] ?? "N/A",
+      "arrival": flight['arr_time'] ?? flight['arr_time_utc'] ?? "N/A",
       "dep_iata": flight['dep_iata'] ?? "N/A",
       "arr_iata": flight['arr_iata'] ?? "N/A",
       "dep_country": flight['dep_country'] ?? "",
@@ -245,8 +460,8 @@ class ApiService {
       "dep_lng": _toDouble(flight['dep_lng']),
       "arr_lat": _toDouble(flight['arr_lat']),
       "arr_lng": _toDouble(flight['arr_lng']),
-      "provider": "airlabs",
-      "airline": flight['airline_name'] ?? "",
+      "provider": provider,
+      "airline": flight['airline_name'] ?? flight['airline'] ?? "",
     };
   }
 
@@ -271,9 +486,17 @@ class ApiService {
   }
 
   static dynamic _pickBetterValue(dynamic a, dynamic b) {
+    if (_isZeroCoord(a) && !_isZeroCoord(b)) return b;
+    if (_isZeroCoord(b) && !_isZeroCoord(a)) return a;
     if (_hasValue(a) && !_isPlaceholder(a)) return a;
     if (_hasValue(b) && !_isPlaceholder(b)) return b;
     return _hasValue(a) ? a : b;
+  }
+
+  static bool _isZeroCoord(dynamic v) {
+    if (v == null) return true;
+    if (v is num) return v == 0;
+    return v.toString().trim() == '0' || v.toString().trim() == '0.0';
   }
 
   static String _pickStatus(dynamic a, dynamic b) {

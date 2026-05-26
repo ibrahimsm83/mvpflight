@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_places_flutter/google_places_flutter.dart';
 import '../controller/travel_controller.dart';
+import '../screens/uber_screen.dart';
 import '../services/api_service.dart';
 
 class HomeScreen extends StatelessWidget {
@@ -91,6 +92,15 @@ class HomeScreen extends StatelessWidget {
                 child: ElevatedButton(
                   onPressed: controller.loadTripSummary,
                   child: const Text("Generate Demo Summary"),
+                ),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () => Get.to(() => const UberScreen()),
+                  icon: const Icon(Icons.local_taxi),
+                  label: const Text("Uber — Home to Airport"),
                 ),
               ),
               const SizedBox(height: 16),
